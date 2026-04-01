@@ -4,6 +4,8 @@ Also checks for active connections to `sfrclak.com`
 
 Feel free to extend the code and/or the rules.
 
+See more about the attack itself: https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
+
 
 # vscan
 
