@@ -1,0 +1,71 @@
+{
+  "rules": [
+    {
+      "id": "package-json-axios-version",
+      "type": "text_pattern",
+      "label": "axios 1.14.1 or 0.30.4 in package.json",
+      "pattern": "\"axios\"\\s*:\\s*\"(?:1\\.14\\.1|0\\.30\\.4)\"",
+      "include_globs": [
+        "package.json"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
+      "id": "package-lock-axios-version",
+      "type": "text_pattern",
+      "label": "axios 1.14.1 or 0.30.4 in package-lock.json",
+      "pattern": "\"(?:axios|node_modules/axios)\"\\s*:\\s*\\{\\s*\"version\"\\s*:\\s*\"(?:1\\.14\\.1|0\\.30\\.4)\"",
+      "include_globs": [
+        "package-lock.json"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
+      "id": "yarn-axios-version",
+      "type": "text_pattern",
+      "label": "axios 1.14.1 or 0.30.4 in yarn.lock",
+      "pattern": "(?:^|\\n)(?:\"?[^\n]*axios[^\n]*\"?):\\n(?:[ \\t].*\\n)*?[ \\t]+version \"(?:1\\.14\\.1|0\\.30\\.4)\"",
+      "include_globs": [
+        "yarn.lock"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
+      "id": "bun-axios-version",
+      "type": "text_pattern",
+      "label": "axios 1.14.1 or 0.30.4 in bun.lock",
+      "pattern": "\"axios\"\\s*:\\s*\\[\\s*\"axios@(?:1\\.14\\.1|0\\.30\\.4)\"",
+      "include_globs": [
+        "bun.lock"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
+      "id": "bun-plain-crypto-js",
+      "type": "text_pattern",
+      "label": "plain-crypto-js in bun.lock",
+      "pattern": "plain-crypto-js",
+      "include_globs": [
+        "bun.lock"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
+      "id": "network-sfrclak-domain",
+      "type": "network_connection",
+      "label": "active connection to sfrclak.com",
+      "pattern": "sfrclak\\.com"
+    },
+    {
+      "id": "network-sfrclak-ip-port",
+      "type": "network_connection",
+      "label": "active connection to 142.11.206.73:8000",
+      "pattern": "142\\.11\\.206\\.73:8000"
+    }
+  ]
+}
