@@ -1,8 +1,8 @@
-# RULES
-Current rule file is meant to help scanning for the AXIOS 1.14.1 and 0.30.4 vulnerabilities as well as the PLAIN-CRYPTO-JS malware package.
+# ABOUT
+It is meant to help scanning for the AXIOS 1.14.1 and 0.30.4 vulnerabilities as well as the PLAIN-CRYPTO-JS malware package.
 Also checks for active connections to `sfrclak.com` 
 
-Feel free to extend it.
+Feel free to extend the code and/or the rules.
 
 
 # vscan
