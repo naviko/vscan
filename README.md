@@ -128,7 +128,7 @@ The scanner prints:
 
 - live progress in the terminal status line
 - immediate `FOUND` records as matches are discovered
-- a final summary with checked counts per rule
+- a final summary with found counts per rule
 
 Sections are derived automatically from rule type:
 
@@ -141,8 +141,11 @@ Sections are derived automatically from rule type:
 The bundled [vscan_rules.json](/Users/ivan/code/vscan/vscan_rules.json) currently checks:
 
 - `package.json` for `axios 1.14.1` or `0.30.4`
+- `package.json` for `plain-crypto-js`
 - `package-lock.json` for `axios 1.14.1` or `0.30.4`
+- `package-lock.json` for `plain-crypto-js`
 - `yarn.lock` for `axios 1.14.1` or `0.30.4`
+- `yarn.lock` for `plain-crypto-js`
 - `bun.lock` for `axios 1.14.1` or `0.30.4`
 - `bun.lock` for `plain-crypto-js`
 - active connections to `sfrclak.com`

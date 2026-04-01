@@ -12,6 +12,17 @@
       ]
     },
     {
+      "id": "package-json-plain-crypto-js",
+      "type": "text_pattern",
+      "label": "plain-crypto-js in package.json",
+      "pattern": "\"plain-crypto-js\"\\s*:",
+      "include_globs": [
+        "package.json"
+      ],
+      "exclude_globs": [
+      ]
+    },
+    {
       "id": "package-lock-axios-version",
       "type": "text_pattern",
       "label": "axios 1.14.1 or 0.30.4 in package-lock.json",
