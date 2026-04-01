@@ -23,12 +23,19 @@ from queue import Queue
 class Rule:
     """Represent one validated scan rule."""
 
+    # Keep the original rule identifier so failures can point back to the JSON config.
     rule_id: str
+    # Use the rule type to decide whether this rule is file-based or runtime-based.
     rule_type: str
+    # Reuse the human-readable label in both streaming output and the final summary.
     label: str
+    # Store the raw regex pattern so the scanner can hand it to ripgrep unchanged.
     pattern: str
+    # Limit text scans to matching file names or relative paths only.
     include_globs: tuple[str, ...]
+    # Allow wildcard-heavy rules to carve out unwanted matches after include_globs matched.
     exclude_globs: tuple[str, ...]
+    # Compile once during config load so network rules can reuse the regex cheaply.
     compiled_pattern: re.Pattern[str]
 
 
@@ -36,7 +43,9 @@ class Rule:
 class MatchRecord:
     """Represent one text-search match."""
 
+    # Keep the label next to each match so merged worker results stay self-describing.
     label: str
+    # Store the exact location string that will be printed to the terminal.
     location: str
 
 
@@ -44,8 +53,11 @@ class MatchRecord:
 class ScanResult:
     """Store matches and queued file counts for one scan path."""
 
+    # Preserve the requested root for final reporting.
     scan_path: Path
+    # Bucket streamed matches by rule label so final printing can stay deterministic.
     matches_by_label: dict[str, list[str]]
+    # Track how many candidate files each text rule was applied to.
     checked_counts_by_label: dict[str, int]
 
 
@@ -171,6 +183,7 @@ class StatusReporter:
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments and validate the basic constraints."""
 
+    # Keep the CLI small and explicit so the tool fails fast on missing inputs.
     argument_parser = argparse.ArgumentParser(
         description="Scan one directory tree and runtime network state using JSON-defined rules.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -237,6 +250,7 @@ def load_rules_file(rules_path: Path) -> dict:
 def load_rules(rules_path: Path) -> list[Rule]:
     """Load, validate, and normalize scan rules."""
 
+    # Validate the whole rules file up front so worker threads never deal with bad config.
     rules_file_object = load_rules_file(rules_path)
     raw_rules = rules_file_object.get("rules")
 
@@ -249,6 +263,7 @@ def load_rules(rules_path: Path) -> list[Rule]:
         if not isinstance(raw_rule, dict):
             raise SystemExit("ERROR: Every rule must be a JSON object.")
 
+        # Normalize every required field once so downstream code can stay simple.
         rule_id = str(raw_rule.get("id", "")).strip()
         label = str(raw_rule.get("label", "")).strip()
         rule_type = str(raw_rule.get("type", "")).strip()
@@ -263,10 +278,12 @@ def load_rules(rules_path: Path) -> list[Rule]:
             raise SystemExit(f"ERROR: Unsupported rule type `{rule_type}`.")
 
         try:
+            # Compile during load time so invalid regex never reaches execution.
             compiled_pattern = re.compile(pattern, re.MULTILINE | re.DOTALL)
         except re.error as error:
             raise SystemExit(f"ERROR: Invalid regex for rule {rule_id}: {error}") from error
 
+        # Only text rules need file globs; network rules operate on runtime snapshots instead.
         include_globs = ()
         exclude_globs = ()
 
@@ -302,6 +319,7 @@ def load_rules(rules_path: Path) -> list[Rule]:
 def ensure_required_tools_exist(rules: list[Rule]) -> None:
     """Fail fast when required runtime tools are missing."""
 
+    # Keep tool validation centralized so execution paths do not need repeated checks.
     if shutil.which("python3") is None:
         raise SystemExit("ERROR: `python3` is required but was not found.")
 
@@ -314,12 +332,14 @@ def ensure_required_tools_exist(rules: list[Rule]) -> None:
 def initialize_match_map(rules: list[Rule]) -> dict[str, list[str]]:
     """Create the stable match map from the configured rule labels."""
 
+    # Pre-create every label bucket so missing matches still produce stable output sections.
     return {rule.label: [] for rule in rules}
 
 
 def initialize_checked_count_map(rules: list[Rule]) -> dict[str, int]:
     """Create the stable checked-count map from the configured rule labels."""
 
+    # Count scanned candidates separately from found matches to aid debugging.
     return {f"{rule.label} checked": 0 for rule in rules}
 
 
@@ -336,6 +356,7 @@ def build_scan_result(scan_path: Path, rules: list[Rule]) -> ScanResult:
 def read_text_file(file_path: Path) -> str:
     """Read a file as text while tolerating mixed encodings."""
 
+    # Ignore decoding errors so strange byte sequences do not abort an otherwise valid scan.
     return file_path.read_text(encoding="utf-8", errors="ignore")
 
 
@@ -359,16 +380,19 @@ def is_regular_scan_file(file_path: Path) -> bool:
     """Return whether a path is a regular file safe to queue for scanning."""
 
     try:
+        # Use lstat so symlinks are rejected instead of being followed to unknown targets.
         file_stat_result = file_path.lstat()
     except OSError:
         return False
 
+    # Only queue plain files; skip sockets, devices, FIFOs, and symlinks entirely.
     return stat.S_ISREG(file_stat_result.st_mode)
 
 
 def rule_matches_file(rule: Rule, relative_file_path: str, file_name: str) -> bool:
     """Return whether a rule should scan a discovered file."""
 
+    # Accept either an exact relative path match or a basename wildcard match.
     include_matches = any(
         fnmatch.fnmatch(relative_file_path, include_glob)
         or fnmatch.fnmatch(file_name, include_glob)
@@ -378,6 +402,7 @@ def rule_matches_file(rule: Rule, relative_file_path: str, file_name: str) -> bo
     if not include_matches:
         return False
 
+    # Apply excludes only after the file is already in-scope for the rule.
     exclude_matches = any(
         fnmatch.fnmatch(relative_file_path, exclude_glob)
         or fnmatch.fnmatch(file_name, exclude_glob)
@@ -394,6 +419,7 @@ def run_text_pattern_rule(
 ) -> list[MatchRecord]:
     """Run one regex text-search rule against one candidate file with ripgrep."""
 
+    # Offload matching to ripgrep so one bad regex/file pair cannot wedge the Python worker.
     completed_process = subprocess.run(
         [
             "rg",
@@ -409,6 +435,7 @@ def run_text_pattern_rule(
         timeout=match_timeout_seconds,
     )
 
+    # ripgrep uses exit code 1 for "no matches", which is a normal scan result here.
     if completed_process.returncode not in (0, 1):
         raise RuntimeError(
             f"ripgrep failed for {file_path} and rule {rule.rule_id}: "
@@ -422,10 +449,12 @@ def run_text_pattern_rule(
 
     for output_line in completed_process.stdout.splitlines():
         try:
+            # Parse ripgrep JSON events so we can recover the exact line containing the submatch.
             output_event = json.loads(output_line)
         except json.JSONDecodeError as error:
             raise RuntimeError(f"Invalid ripgrep JSON output for {file_path}: {error}") from error
 
+        # Ignore non-match events such as begin/end/summary.
         if output_event.get("type") != "match":
             continue
 
@@ -437,6 +466,7 @@ def run_text_pattern_rule(
         if not matched_text or not submatches:
             continue
 
+        # Use the first submatch offset to print the actual matching line instead of the whole block.
         first_submatch = submatches[0]
         submatch_start = int(first_submatch.get("start", 0))
         line_start_offset = matched_text.rfind("\n", 0, submatch_start) + 1
@@ -462,6 +492,7 @@ def run_text_pattern_rule(
 def capture_network_connections() -> str:
     """Capture the current network connection table using lsof."""
 
+    # Capture once per scan so multiple runtime rules reuse the same snapshot consistently.
     completed_process = subprocess.run(
         ["lsof", "-i"],
         check=False,
@@ -481,6 +512,7 @@ def run_network_rule(rule: Rule, network_snapshot: str) -> list[MatchRecord]:
     match_records: list[MatchRecord] = []
 
     for output_line in network_snapshot.splitlines():
+        # Test each line independently because lsof output is already line-oriented.
         if rule.compiled_pattern.search(output_line) is None:
             continue
 
@@ -492,6 +524,7 @@ def run_network_rule(rule: Rule, network_snapshot: str) -> list[MatchRecord]:
 def append_match_records(scan_result: ScanResult, match_records: list[MatchRecord]) -> None:
     """Append finished match records into the result bucket."""
 
+    # Merge worker output under the owning rule label so final reporting stays grouped.
     for match_record in match_records:
         scan_result.matches_by_label[match_record.label].append(match_record.location)
 
@@ -532,6 +565,7 @@ def print_scan_results(scan_result: ScanResult, rules: list[Rule]) -> int:
     grouped_rules_by_section: dict[str, list[Rule]] = {}
 
     for rule in rules:
+        # Derive display sections from rule type so the JSON schema can stay minimal.
         section_title = (
             "Package Files"
             if rule.rule_type == "text_pattern"
@@ -572,9 +606,11 @@ def submit_scan_task(
 ) -> None:
     """Queue one candidate file scan and update progress counters immediately."""
 
+    # Increment per-rule checked counts before queuing so the summary reflects attempted scans.
     for matching_rule in matching_rules:
         scan_result.checked_counts_by_label[f"{matching_rule.label} checked"] += 1
 
+    # Queue the file once with all matching rules so the worker can scan that file in one pass.
     pending_scan_queue.put((file_path, matching_rules))
     status_reporter.increment_scheduled_tasks()
 
@@ -592,19 +628,23 @@ def worker_loop(
     """Process queued file scans until the producer signals completion or failure."""
 
     while True:
+        # Block on the shared queue so worker threads naturally back off when there is no work.
         queued_item = pending_scan_queue.get()
 
         try:
             if queued_item is None:
+                # Use a sentinel to shut workers down once the producer has finished queueing.
                 return
 
             if stop_event.is_set():
+                # Stop accepting real work once another thread has already failed.
                 continue
 
             file_path, matching_rules = queued_item
             match_records: list[MatchRecord] = []
 
             for matching_rule in matching_rules:
+                # Run every applicable rule against this file before touching shared result state.
                 match_records.extend(
                     run_text_pattern_rule(
                         matching_rule,
@@ -614,19 +654,23 @@ def worker_loop(
                 )
 
             with scan_result_lock:
+                # Hold the result lock only while mutating shared scan output structures.
                 append_match_records(scan_result, match_records)
 
             if match_records:
+                # Stream matches outside the result mutation step so the lock scope stays small.
                 stream_match_records(status_reporter, match_records)
 
             status_reporter.increment_completed_tasks()
         except Exception as error:
             with failure_lock:
+                # Preserve only the first worker error so the main thread gets one clear failure.
                 if failure_state["message"] is None:
                     failure_state["message"] = f"Failed to scan queued work item: {error}"
             stop_event.set()
             return
         finally:
+            # Always mark the queue item done so Queue.join() cannot hang on worker failure.
             pending_scan_queue.task_done()
 
 
@@ -642,6 +686,7 @@ def walk_and_queue_files(
 
     for current_root, _, file_names in os.walk(scan_path):
         if stop_event.is_set():
+            # Stop producing new work as soon as a worker failure or interrupt is signaled.
             return
 
         current_root_path = Path(current_root)
@@ -663,6 +708,7 @@ def walk_and_queue_files(
                 continue
 
             relative_file_path = build_relative_path(current_file_path, scan_path)
+            # Resolve all matching rules before queueing so unmatched files are never read.
             matching_rules = tuple(
                 rule
                 for rule in rules
@@ -684,11 +730,13 @@ def walk_and_queue_files(
 def main() -> int:
     """Load configured rules, scan candidate files immediately, and print results."""
 
+    # Resolve and validate all inputs before any background work starts.
     parsed_arguments = parse_arguments()
     validated_scan_path = validate_scan_path(parsed_arguments.path)
     rules_path = Path(parsed_arguments.rules).expanduser().resolve()
     rules = load_rules(rules_path)
     ensure_required_tools_exist(rules)
+    # Split rule execution paths early so file workers only see text-based rules.
     text_rules = [rule for rule in rules if rule.rule_type == "text_pattern"]
     network_rules = [rule for rule in rules if rule.rule_type == "network_connection"]
 
@@ -704,10 +752,12 @@ def main() -> int:
     status_reporter.update_status(f"{validated_scan_path}: starting")
 
     if network_rules:
+        # Evaluate runtime-only checks first because they do not depend on filesystem traversal.
         status_reporter.update_status("checking active network connections")
         network_snapshot = capture_network_connections()
 
         for network_rule in network_rules:
+            # Treat each runtime rule as one checked task in the live progress display.
             scan_result.checked_counts_by_label[f"{network_rule.label} checked"] += 1
             status_reporter.increment_scheduled_tasks()
             match_records = run_network_rule(network_rule, network_snapshot)
@@ -719,6 +769,7 @@ def main() -> int:
             status_reporter.increment_completed_tasks()
 
     for worker_index in range(parsed_arguments.threads):
+        # Keep workers daemonized so Ctrl+C can terminate the process even if one worker wedges.
         worker_thread = threading.Thread(
             target=worker_loop,
             args=(
@@ -739,6 +790,7 @@ def main() -> int:
 
     try:
         try:
+            # The producer walks once and pushes matching files to the worker queue immediately.
             walk_and_queue_files(
                 validated_scan_path,
                 text_rules,
@@ -749,8 +801,10 @@ def main() -> int:
             )
 
             for _ in worker_threads:
+                # Send one sentinel per worker so every worker eventually exits its queue loop.
                 pending_scan_queue.put(None)
 
+            # Wait until every queued file has either been processed or failed.
             pending_scan_queue.join()
 
             if failure_state["message"] is not None:
@@ -760,9 +814,11 @@ def main() -> int:
             print_scan_results(scan_result, rules)
             return 0
         except KeyboardInterrupt:
+            # Flip the shared stop flag so the producer and workers stop taking new work quickly.
             stop_event.set()
             raise SystemExit("ERROR: Scan interrupted by user.")
     finally:
+        # Always tear down the live status line, including on failures and interrupts.
         status_reporter.finish()
 
 
