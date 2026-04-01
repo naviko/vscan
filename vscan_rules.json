@@ -88,6 +88,12 @@
       "type": "network_connection",
       "label": "active connection to 142.11.206.73:8000",
       "pattern": "142\\.11\\.206\\.73:8000"
+    },
+    {
+      "id": "macos-act-cache-path",
+      "type": "path_exists",
+      "label": "filesystem path /Library/Caches/com.apple.act.mond exists",
+      "target_path": "/Library/Caches/com.apple.act.mond"
     }
   ]
 }

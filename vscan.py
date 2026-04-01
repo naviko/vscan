@@ -17,6 +17,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
+from typing import Pattern
 
 
 @dataclass(frozen=True)
@@ -31,12 +32,14 @@ class Rule:
     label: str
     # Store the raw regex pattern so the scanner can hand it to ripgrep unchanged.
     pattern: str
+    # Keep the exact path for filesystem presence checks.
+    target_path: str
     # Limit text scans to matching file names or relative paths only.
     include_globs: tuple[str, ...]
     # Allow wildcard-heavy rules to carve out unwanted matches after include_globs matched.
     exclude_globs: tuple[str, ...]
     # Compile once during config load so network rules can reuse the regex cheaply.
-    compiled_pattern: re.Pattern[str]
+    compiled_pattern: Pattern[str] | None
 
 
 @dataclass(frozen=True)
@@ -268,20 +271,31 @@ def load_rules(rules_path: Path) -> list[Rule]:
         label = str(raw_rule.get("label", "")).strip()
         rule_type = str(raw_rule.get("type", "")).strip()
         pattern = str(raw_rule.get("pattern", "")).strip()
+        target_path = str(raw_rule.get("target_path", "")).strip()
 
-        if not rule_id or not rule_type or not label or not pattern:
+        if not rule_id or not rule_type or not label:
             raise SystemExit(
-                "ERROR: Every rule must define non-empty `id`, `type`, `label`, and `pattern`."
+                "ERROR: Every rule must define non-empty `id`, `type`, and `label`."
             )
 
-        if rule_type not in {"text_pattern", "network_connection"}:
+        if rule_type not in {"text_pattern", "network_connection", "path_exists"}:
             raise SystemExit(f"ERROR: Unsupported rule type `{rule_type}`.")
 
-        try:
-            # Compile during load time so invalid regex never reaches execution.
-            compiled_pattern = re.compile(pattern, re.MULTILINE | re.DOTALL)
-        except re.error as error:
-            raise SystemExit(f"ERROR: Invalid regex for rule {rule_id}: {error}") from error
+        compiled_pattern: Pattern[str] | None = None
+        if rule_type in {"text_pattern", "network_connection"}:
+            if not pattern:
+                raise SystemExit(
+                    f"ERROR: Rule {rule_id} must define non-empty `pattern` for type `{rule_type}`."
+                )
+            try:
+                # Compile during load time so invalid regex never reaches execution.
+                compiled_pattern = re.compile(pattern, re.MULTILINE | re.DOTALL)
+            except re.error as error:
+                raise SystemExit(f"ERROR: Invalid regex for rule {rule_id}: {error}") from error
+        elif not target_path:
+            raise SystemExit(
+                f"ERROR: Rule {rule_id} must define non-empty `target_path` for type `path_exists`."
+            )
 
         # Only text rules need file globs; network rules operate on runtime snapshots instead.
         include_globs = ()
@@ -307,6 +321,7 @@ def load_rules(rules_path: Path) -> list[Rule]:
                 rule_type=rule_type,
                 label=label,
                 pattern=pattern,
+                target_path=target_path,
                 include_globs=include_globs,
                 exclude_globs=exclude_globs,
                 compiled_pattern=compiled_pattern,
@@ -513,12 +528,23 @@ def run_network_rule(rule: Rule, network_snapshot: str) -> list[MatchRecord]:
 
     for output_line in network_snapshot.splitlines():
         # Test each line independently because lsof output is already line-oriented.
-        if rule.compiled_pattern.search(output_line) is None:
+        if rule.compiled_pattern is None or rule.compiled_pattern.search(output_line) is None:
             continue
 
         match_records.append(MatchRecord(label=rule.label, location=output_line))
 
     return match_records
+
+
+def run_path_exists_rule(rule: Rule) -> list[MatchRecord]:
+    """Run one filesystem presence rule against its configured target path."""
+
+    target_path = Path(rule.target_path).expanduser()
+
+    if not target_path.exists():
+        return []
+
+    return [MatchRecord(label=rule.label, location=str(target_path.resolve()))]
 
 
 def append_match_records(scan_result: ScanResult, match_records: list[MatchRecord]) -> None:
@@ -566,11 +592,12 @@ def print_scan_results(scan_result: ScanResult, rules: list[Rule]) -> int:
 
     for rule in rules:
         # Derive display sections from rule type so the JSON schema can stay minimal.
-        section_title = (
-            "Package Files"
-            if rule.rule_type == "text_pattern"
-            else "Active Network Connections"
-        )
+        if rule.rule_type == "text_pattern":
+            section_title = "Package Files"
+        elif rule.rule_type == "network_connection":
+            section_title = "Active Network Connections"
+        else:
+            section_title = "Filesystem Paths"
         grouped_rules_by_section.setdefault(section_title, []).append(rule)
 
     print_section_header("Validating Input")
@@ -739,6 +766,7 @@ def main() -> int:
     # Split rule execution paths early so file workers only see text-based rules.
     text_rules = [rule for rule in rules if rule.rule_type == "text_pattern"]
     network_rules = [rule for rule in rules if rule.rule_type == "network_connection"]
+    path_rules = [rule for rule in rules if rule.rule_type == "path_exists"]
 
     status_reporter = StatusReporter()
     scan_result = build_scan_result(validated_scan_path, rules)
@@ -761,6 +789,21 @@ def main() -> int:
             scan_result.checked_counts_by_label[f"{network_rule.label} checked"] += 1
             status_reporter.increment_scheduled_tasks()
             match_records = run_network_rule(network_rule, network_snapshot)
+            append_match_records(scan_result, match_records)
+
+            if match_records:
+                stream_match_records(status_reporter, match_records)
+
+            status_reporter.increment_completed_tasks()
+
+    if path_rules:
+        # Run exact filesystem path checks before the directory walk because they are standalone.
+        status_reporter.update_status("checking filesystem paths")
+
+        for path_rule in path_rules:
+            scan_result.checked_counts_by_label[f"{path_rule.label} checked"] += 1
+            status_reporter.increment_scheduled_tasks()
+            match_records = run_path_exists_rule(path_rule)
             append_match_records(scan_result, match_records)
 
             if match_records:
