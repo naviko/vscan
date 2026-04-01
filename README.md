@@ -45,6 +45,7 @@ Supported rule types:
 
 - `text_pattern`
 - `network_connection`
+- `path_exists`
 
 ### `text_pattern`
 
@@ -97,6 +98,28 @@ Example:
 }
 ```
 
+### `path_exists`
+
+Use this to check whether an exact filesystem path currently exists.
+
+Required fields:
+
+- `id`
+- `type`
+- `label`
+- `target_path`
+
+Example:
+
+```json
+{
+  "id": "macos-act-cache-path",
+  "type": "path_exists",
+  "label": "filesystem path /Library/Caches/com.apple.act.mond exists",
+  "target_path": "/Library/Caches/com.apple.act.mond"
+}
+```
+
 ## Output
 
 The scanner prints:
@@ -109,6 +132,7 @@ Sections are derived automatically from rule type:
 
 - `text_pattern` -> `Package Files`
 - `network_connection` -> `Active Network Connections`
+- `path_exists` -> `Filesystem Paths`
 
 ## Current Example Rules
 
@@ -121,9 +145,11 @@ The bundled [vscan_rules.json](/Users/ivan/code/vscan/vscan_rules.json) currentl
 - `bun.lock` for `plain-crypto-js`
 - active connections to `sfrclak.com`
 - active connections to `142.11.206.73:8000`
+- filesystem path `/Library/Caches/com.apple.act.mond`
 
 ## Notes
 
 - `Ctrl+C` should stop the scan and exit with an error message.
 - `network_connection` rules require `lsof`.
+- `path_exists` rules check exact paths and do not depend on `--path`.
 - `text_pattern` rules currently use regex matching with a per file-rule timeout.
